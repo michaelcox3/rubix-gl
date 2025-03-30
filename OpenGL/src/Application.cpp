@@ -150,11 +150,12 @@ int main(void)
 		 -0.5f, 0.5f, // 3
 	};
 
+	// Vertex Array Buffer
 	unsigned int vao;
 	GLCall(glGenVertexArrays(1, &vao));
 	GLCall(glBindVertexArray(vao));
 
-	// Define a buffer
+	// Define a Vertex Buffer Object
 	unsigned int buffer;
 	// n: specifies number of buffer object names to be generated
 	// buffers: an array in which the generated buffer object names are stored (if only generating 1, it can just be an unsigned int
@@ -172,12 +173,13 @@ int main(void)
 	GLCall(glBufferData(GL_ARRAY_BUFFER, 4 * 2 * sizeof(float), positions, GL_STATIC_DRAW));
 
 
+	// Enable the VAO attribute list at index 0
 	GLCall(glEnableVertexAttribArray(0));
-
 	// glVertexAttribPointer: defines the structure of the data. tells opengl how to interpret the data
 	// ex. the number of components per vertex, the data type, and stride 
+	// * ITS THIS LINE THAT LINKS THE BUFFER ABOVE TO THE VAO
 	// 
-	// index = 0 because its the first attribute
+	// index = 0 refers to the first attribute list of vao is going to be bound to the currently bound VBO 
 	// size = component count in the attribute
 	// type = float
 	// GL_FALSE because no already in floats (already normalized)
@@ -225,6 +227,7 @@ int main(void)
 	
 
 	// unbind everything D:
+	GLCall(glBindVertexArray(0));
 	glUseProgram(0);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
@@ -243,18 +246,8 @@ int main(void)
 		GLCall(glUseProgram(shader));
 		GLCall(glUniform4f(location, r, 0.3f, 0.8f, 1.0f)); // setting the color here!
 
-		GLCall(glBindBuffer(GL_ARRAY_BUFFER, buffer));
-		
-
-		GLCall(glEnableVertexAttribArray(0));
-		GLCall(glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, 0));
-		
-		
+		GLCall(glBindVertexArray(vao));
 		GLCall(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBufferObject));
-		
-
-
-
 
 		// HAS TO BE UNSIGNED INT
 		GLCall(glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr)); //for index buffers
