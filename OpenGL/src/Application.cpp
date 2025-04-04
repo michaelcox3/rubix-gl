@@ -4,103 +4,26 @@
 #include <fstream>
 #include <sstream>
 
-// forces a breakpoint, stop the debugger
-#define ASSERT(x) if (!(x)) __debugbreak();
-#define GLCall(x) GLClearError();\
-	x;\
-	ASSERT(GLLogCall(#x, __FILE__, __LINE__))
+#include "VertexBufferObject.h"
+#include "IndexBufferObject.h"
+#include "Renderer.h"
+#include "VertexArrayObject.h"
 
-static void GLClearError() {
-	while (glGetError() != GL_NO_ERROR);
-}
+#include "Shader.h"
+#include "Texture.h"
 
-// TODO CONVERT ERROR DECIMAL TO HEXADECIMAL THAN TO THE GL ERROR ENUM TEXT
-static bool GLLogCall(const char* function, const char* file, int line) {
-	while (GLenum error = glGetError()) {
-		std::cout << "[OpenGL Error] (" << error << "): " 
-			<< function << " " 
-			<< file << ":"
-			<< line << std::endl;
-		return false;
-	}
-	return true;
-}
+#include "glm/glm.hpp"
+#include "glm/gtc/matrix_transform.hpp"
 
-
-static std::string ParseShader(const std::string& filePath) {
-	std::ifstream stream(filePath);
-
-	bool isStartOfShaderCode = false;
-
-	std::string line;
-	std::stringstream ss;
-	while (getline(stream, line)) {
-		// npos means substring not found
-		if (line.find("#shader") != std::string::npos) {
-			isStartOfShaderCode = true;
-		}
-		else if (isStartOfShaderCode) {
-			ss << line << '\n';
-		}
-	}
-
-	return ss.str();
-}
-
-static unsigned int CompileShader(unsigned int type, const std::string& source) {
-	unsigned int id = glCreateShader(type);
-	const char* src = source.c_str(); // or &source[0] same thing
-
-	// if length = null, it means each string is assumed to be null terminated. (\0)
-	glShaderSource(id, 1, &src, nullptr);
-	glCompileShader(id);
-
-	int result;
-	glGetShaderiv(id, GL_COMPILE_STATUS, &result);
-	if (result == GL_FALSE) {
-		int length;
-		glGetShaderiv(id, GL_INFO_LOG_LENGTH, &length);
-		char* message = (char*) alloca(length * sizeof(char));
-		glGetShaderInfoLog(id, length, &length, message);
-		std::cout << "Failed to compile " << (type == GL_VERTEX_SHADER ? "vertex" : "fragment") << "shader!" << std::endl;
-		std::cout << message << std::endl;
-		glDeleteShader(id);
-		return 0;
-	}
-
-	return id;
-}
-
-// to provide opengl the shader source code
-// compile into shader program, link the two shaders into a single shader program
-// return unique id for that shader 
-static unsigned int CreateShaderProgram(const std::string& vertexShader, const std::string& fragmentShader)
-{
-	unsigned int program = glCreateProgram(); // create shader program, instead of taking in the ref to the int like in genbuffer, it returns the id
-	unsigned int vs = CompileShader(GL_VERTEX_SHADER, vertexShader);
-	unsigned int fs = CompileShader(GL_FRAGMENT_SHADER, fragmentShader);
-
-	glAttachShader(program, vs);
-	glAttachShader(program, fs);
-	glLinkProgram(program); // code uwrite once and forget about it :D
-	glValidateProgram(program); // performs validation on the program .. XD
-
-	// now that the shaders had been linked into a program, delete the intermediates
-	glDeleteShader(vs);
-	glDeleteShader(fs);
-
-	return program;
-}
-
+#include "ImGUI/imgui.h"
+#include "ImGUI/imgui_impl_glfw.h"
+#include "ImGUI/imgui_impl_opengl3.h"
 
 int main(void)
 {
-	GLFWwindow* window;
-
 	/* Initialize the library */
 	if (!glfwInit())
 		return -1;
-
 
 	// OPEN GL 3.3
 	// SET CORE
@@ -109,7 +32,7 @@ int main(void)
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
 	/* Create a windowed mode window and its OpenGL context */
-	window = glfwCreateWindow(640, 480, "Hello World", NULL, NULL);
+	GLFWwindow* window = glfwCreateWindow(1280, 720, "Hello World", NULL, NULL);
 	if (!window)
 	{
 		glfwTerminate();
@@ -119,158 +42,221 @@ int main(void)
 	/* Make the window's context current */
 	glfwMakeContextCurrent(window);
 
-
 	// set fps to monitor refresh rate
-	glfwSwapInterval(10);
+	glfwSwapInterval(1); // value=1 is vsync
 
 	// This must be called after glfwMakeContextCurrent
 	if (glewInit() != GLEW_OK) {
 		std::cout << "Error init GLEW" << std::endl;
 	}
 
+	// Setup ImGUI
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO(); (void)io;
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+	// Setup Dear ImGui style
+	ImGui::StyleColorsDark();
+
+	// Setup Platform/Renderer backends
+	ImGui_ImplGlfw_InitForOpenGL(window, true);
+	ImGui_ImplOpenGL3_Init(nullptr);
+	// End Setup ImGUI
+
 	std::cout << "Running GL_VERSION: " << glGetString(GL_VERSION) << std::endl;
 
-	// basic buffer. the 3 points of the triangle
-	// opengl doesn't know how to interpret these vertices at this point
-	//float positions[] = {
-	//	-0.5f, -0.5f,
-	//	 0.5f, -0.5f,
-	//	 0.5f,  0.5f,
 
-	//	 0.5f, 0.5f,
-	//	 -0.5f, 0.5f,
-	//	 -0.5f,  -0.5f,
-	//};
-	
-	// to be put in the vertex buffer
-	float positions[] = {
-		-0.5f, -0.5f, // 0
-		 0.5f, -0.5f, // 1
-		 0.5f,  0.5f, // 2
-		 -0.5f, 0.5f, // 3
-	};
-
-	// Vertex Array Buffer
-	unsigned int vao;
-	GLCall(glGenVertexArrays(1, &vao));
-	GLCall(glBindVertexArray(vao));
-
-	// Define a Vertex Buffer Object
-	unsigned int buffer;
-	// n: specifies number of buffer object names to be generated
-	// buffers: an array in which the generated buffer object names are stored (if only generating 1, it can just be an unsigned int
-	GLCall(glGenBuffers(1, &buffer)); // this creates the buffer, returns the id
-
-	// Because OpenGL is a 'state machine' , we must call glBindBuffer to specificy which buffer we are refering to for subsequent operations
-	// Selecting is known as binding in OpenGL (im about to work on this buffer)
-	GLCall(glBindBuffer(GL_ARRAY_BUFFER, buffer));
-
-	// glBufferData: load the data into the buffer (from cpu into gpu)
-	// target: the array buffer
-	// size: the size of the data
-	// data: the data
-	// usage: GL_STATIC_DRAW is a usage param to define how this buffer will be used, specifically that is will be written to once, but used many times for drawing
-	GLCall(glBufferData(GL_ARRAY_BUFFER, 4 * 2 * sizeof(float), positions, GL_STATIC_DRAW));
-
-
-	// Enable the VAO attribute list at index 0
-	GLCall(glEnableVertexAttribArray(0));
-	// glVertexAttribPointer: defines the structure of the data. tells opengl how to interpret the data
-	// ex. the number of components per vertex, the data type, and stride 
-	// * ITS THIS LINE THAT LINKS THE BUFFER ABOVE TO THE VAO
-	// 
-	// index = 0 refers to the first attribute list of vao is going to be bound to the currently bound VBO 
-	// size = component count in the attribute
-	// type = float
-	// GL_FALSE because no already in floats (already normalized)
-	// stride = # of bytes (2 floats = 8 bytes) (the byte offset between consecutive vertex attributes; here, the vertices are tightly packed with two floats each).
-	// pointer = offset of the 1st component of the first generic vertex attribute (offset in buffer to where the data begins)
-	GLCall(glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, 0));
-
-
-
-
-
-	// index buffer, we do this so we don't repeat storing the same positional data in memory
-	// unsigned ints is required for index buffer 
-	unsigned int indices[] = { // for drawing a square :D
-		0, 1, 2,
-		2, 3, 0
-	};
-
-	unsigned int indexBufferObject;
-	glGenBuffers(1, &indexBufferObject);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBufferObject);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, 6 * sizeof(unsigned int), indices, GL_STATIC_DRAW);
-
-
-	// relative to the project directory, defined in debugging
-	std::string vertexShader = ParseShader("res/shaders/Vertex.shader");
-	std::string fragShader = ParseShader("res/shaders/Frag.shader");
-
-	std::cout << vertexShader << std::endl;
-	std::cout << fragShader << std::endl;
-	
-
-	unsigned int shader = CreateShaderProgram(vertexShader, fragShader);
-	glUseProgram(shader);
-
-	// to grab the location for the u_Color uniform variable
-	GLCall(int location = glGetUniformLocation(shader, "u_Color"));
-	if (location == -1) {
-		std::cout << "Couldn't find the u_Color uniform!" << std::endl;
-	}
-	GLCall(glUniform4f(location, 0.2f, 0.3f, 0.8f, 1.0f)); // setting the color here!
-
-
-
-	
-
-	// unbind everything D:
-	GLCall(glBindVertexArray(0));
-	glUseProgram(0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-
-
-
-	float r = 0.0f;
-	float increment = 0.05f;
-
-	/* Loop until the user closes the window */
-	while (!glfwWindowShouldClose(window))
+	// Scoped
 	{
-		/* Render here */
-		glClear(GL_COLOR_BUFFER_BIT);
 
-		GLCall(glUseProgram(shader));
-		GLCall(glUniform4f(location, r, 0.3f, 0.8f, 1.0f)); // setting the color here!
+		// to be put in the vertex buffer
+		//float positions[] = {
+		//	// positions	 // color		    // texCoords (0,0) is bottom left, (1,1) is top right
+		//	-50.0f, -50.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f, // vertex 0
+		//	 50.0f, -50.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f, // vertex 1
+		//	 50.0f,  50.0f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f, // vertex 2
+		//	-50.0f,  50.0f,  0.0f, 1.0f, 0.0f,  0.0f, 1.0f  // vertex 3
+		//};
 
-		GLCall(glBindVertexArray(vao));
-		GLCall(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBufferObject));
+		float vertices[] = {
+			// positions		   // texCoords (0,0) is bottom left, (1,1) is top right
+			-0.5f, -0.5f, 0.0f,  0.0f, 0.0f, // vertex 0
+			 0.5f, -0.5f, 0.0f,  1.0f, 0.0f, // vertex 1
+			 0.5f,  0.5f, 0.0f,  1.0f, 1.0f, // vertex 2
+			-0.5f,  0.5f, 0.0f,  0.0f, 1.0f  // vertex 3
+		};
 
-		// HAS TO BE UNSIGNED INT
-		GLCall(glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr)); //for index buffers
+		//for (int i = 0; i < sizeof(positions) / sizeof(positions[0]); i++) {
+		//	positions[i] = positions[i] * 100 + 100;
+		//}
+
+		std::cout << vertices[1] << std::endl;
+
+		// index buffer, we do this so we don't repeat storing the same positional data in memory
+		// unsigned ints is required for index buffer 
+		unsigned int indices[] = { // for drawing a square :D (2 triangles)
+			0, 1, 2,
+			2, 3, 0
+		};
+
+		// Setup gl blending
+		GLCall(glEnable(GL_BLEND));
+		GLCall(glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
 
 
-		// animate the color!
-		if (r > 1.0f) {
-			increment = -0.05f;
-		} else if (r < 0.0f) {
-			increment = 0.05f;
+		// Vertex Array Buffer
+		VertexArray vao;
+
+		// VBO
+		VertexBuffer vbo(vertices, sizeof(float) * 4 * 7); // 4 vertex * 7 components per vertex
+
+		// VBO Layout
+		VertexBufferLayout vbl;
+		vbl.Push<float>(3); // 1-3 components pertain to the position attribute
+		vbl.Push<float>(2); // 4-5 components pertain to the texture coordinates attribute
+
+		//vbl.Push<float>(2); // 1-2 components pertain to the position attribute
+		//vbl.Push<float>(3); // 3-5 components pertain to the color attribute
+		//vbl.Push<float>(2); // 6-7 components pertain to the texture coordinates attribute
+
+		vao.AddBuffer(vbo, vbl);
+
+		IndexBuffer ibo(indices, 6);
+
+		// The projection matrix
+		// 4:3
+		//glm::mat4 proj = glm::ortho(-2.0f, 2.0f, -1.5f, 1.5f);
+		//glm::mat4 projection = glm::ortho(0.0f, 960.0f, 0.0f, 540.0f, -1.0f, 1.0f);
+		// glm::perspective(glm::radians(45.0f), (float)width/(float)height, 0.1f, 100.0f);
+		
+		// fov, aspect ratio, near plane, far plane
+		glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1280.0f / 720.0f, 0.1f, 100.0f);
+		//glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -3.0f)); // move the camera 100 units to the LEFT 
+																			   // (or move all objects 100 to the right)
+
+		// create multiple models for multiple objects :D
+		//glm::mat4 model = glm::translate(glm::mat4(1.0), glm::vec3(200, 200, 0));
+		//glm::mat4 mvp = projection * view * model;
+
+		// relative to the project directory, defined in debugging
+		Shader shader("res/shaders/Vertex.shader", "res/shaders/Frag.shader");
+		Texture texture("res/textures/soldier01.png");
+
+		// Binding textures
+		texture.Bind(); // no param means bound to slot 0 
+		shader.SetUniform1i("u_Texture", 0);
+
+		// unbind everything D:
+		vao.Unbind(); //GLCall(glBindVertexArray(0));
+		shader.Unbind(); //glUseProgram(0);
+		vbo.Unbind(); //glBindBuffer(GL_ARRAY_BUFFER, 0);
+		ibo.Unbind(); //glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+
+
+		Renderer renderer;
+
+		// Our state
+		glm::vec3 cameraPosition = glm::vec3(0.0f, 0.0f, -3.0f);
+		ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+		float moveSpeed = 0.01f;
+
+		/* Loop until the user closes the window */
+		while (!glfwWindowShouldClose(window))
+		{
+			// Poll and handle events (inputs, window resize, etc.)
+			// You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
+			// - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
+			// - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
+			// Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
+			glfwPollEvents();
+			if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0)
+			{
+				ImGui_ImplGlfw_Sleep(10);
+				continue;
+			}
+
+			// Start the Dear ImGui frame
+			ImGui_ImplOpenGL3_NewFrame();
+			ImGui_ImplGlfw_NewFrame();
+			ImGui::NewFrame();
+
+			/* Render here */
+			renderer.Clear();
+
+			// Inputs
+
+			if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+				cameraPosition.z = cameraPosition.z + moveSpeed;
+			if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+				cameraPosition.z = cameraPosition.z - moveSpeed;
+			if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+				cameraPosition.x = cameraPosition.x + moveSpeed;
+			if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+				cameraPosition.x = cameraPosition.x - moveSpeed;
+
+			glm::mat4 view = glm::translate(glm::mat4(1.0f), cameraPosition);
+
+			// object 1
+			shader.Bind();
+			shader.SetUniform4f("u_Color", clear_color.x, clear_color.y, clear_color.z, clear_color.w); // setting the color here!
+			glm::mat4 model = glm::translate(glm::mat4(1.0), glm::vec3(0.5, 0, 0));
+			glm::mat4 mvp = projection * view * model;
+			shader.SetUniformMat4f("u_MVP", mvp);
+			renderer.Draw(vao, ibo, shader);
+			
+
+			// object 2
+			shader.Bind();
+			shader.SetUniform4f("u_Color", clear_color.x, clear_color.y, clear_color.z, clear_color.w); // setting the color here!
+			glm::mat4 model2 = glm::mat4(1.0);
+			model2 = glm::rotate(model2, glm::radians(-55.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+			glm::mat4 mvp2 = projection * view * model2;
+			shader.SetUniformMat4f("u_MVP", mvp2);
+			renderer.Draw(vao, ibo, shader);
+
+
+
+
+			// 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
+			{
+				static float f = 0.0f;
+				static int counter = 0;
+
+				ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
+
+				ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
+
+				ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
+				ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
+
+				if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
+					counter++;
+				ImGui::SameLine();
+				ImGui::Text("counter = %d", counter);
+
+				ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+				ImGui::End();
+			}
+
+			// Render ImGUI
+			ImGui::Render();
+			ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+			/* Swap front and back buffers */
+			glfwSwapBuffers(window);
+
+			/* Poll for and process events */
+			glfwPollEvents();
 		}
-
-		r += increment;
-
-		/* Swap front and back buffers */
-		glfwSwapBuffers(window);
-
-		/* Poll for and process events */
-		glfwPollEvents();
 	}
 
-	glDeleteProgram(shader);
-
+	// Cleanup
+	ImGui_ImplOpenGL3_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
+	ImGui::DestroyContext();
 	glfwTerminate();
 	return 0;
 }
